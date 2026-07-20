@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "functions": {
+    "api/*": {
+      "memory": 4096,
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    { "source": "/api/render", "destination": "/api/render" }
+  ]
+}
+
