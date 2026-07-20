@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>After Motion - Build Engine</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- WebM Muxer for offline, backend-style video encoding -->
+    <script src="https://unpkg.com/webm-muxer/build/webm-muxer.js"></script>
+    <!-- HTML2Canvas as a fallback for DOM capture -->
+    <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        vercel: {
+                            100: '#eaeaea',
+                            200: '#999999',
+                            300: '#888888',
+                            400: '#666666',
+                            500: '#444444',
+                            600: '#333333',
+                            700: '#222222',
+                            800: '#111111',
+                            900: '#0a0a0a',
+                        },
+                        brand: {
+                            blue: '#0070f3',
+                            cyan: '#50e3c2',
+                            violet: '#7928ca'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+                        mono: ['Geist Mono', 'Menlo', 'Monaco', 'Courier New', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            background-color: theme('colors.vercel.900');
+            color: theme('colors.vercel.100');
+            margin: 0;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .glass-card {
+            background: theme('colors.vercel.800');
+            border: 1px solid theme('colors.vercel.700');
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+        }
+
+        .upload-zone {
+            border: 1px dashed theme('colors.vercel.500');
+            transition: all 0.2s ease;
+            background: rgba(255,255,255,0.02);
+        }
+        
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: theme('colors.vercel.300');
+            background: rgba(255,255,255,0.05);
+        }
+
+        /* Virtual Display Area */
+        .preview-container {
+            width: 100%;
+            aspect-ratio: 16/9;
+            position: relative;
+            overflow: hidden;
+            background: #000;
+            border-radius: 0.5rem;
+            border: 1px solid theme('colors.vercel.700');
+            background-image: 
+                linear-gradient(45deg, #111 25%, transparent 25%), 
+                linear-gradient(-45deg, #111 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #111 75%), 
+                linear-gradient(-45deg, transparent 75%, #111 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+
+        #render-frame {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform-origin: 0 0;
+            border: none;
+            background: transparent;
+        }
+
+        /* Terminal Scrollbar */
+        .terminal-scroll::-webkit-scrollbar { width: 6px; }
+        .terminal-scroll::-webkit-scrollbar-track { background: transparent; }
+        .terminal-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+
+        /* Glowing Button Effect */
+        .btn-deploy {
+            background: linear-gradient(180deg, #fff, #e6e6e6);
+            color: #000;
+            position: relative;
+            overflow: hidden;
+        }
+        .btn-deploy::after {
+            content: '';
+            position: absolute;
+            top: 0; left: -100%; width: 50%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+            transition: all 0.5s ease;
+        }
+        .btn-deploy:hover::after { left: 150%; }
+        .btn-deploy:disabled { background: #333; color: #666; cursor: not-allowed; }
+        .btn-deploy:disabled::after { display: none; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col font-sans">
+
+    <header class="border-b border-vercel-700 bg-vercel-900/80 backdrop-blur-md sticky top-0 z-40">
+        <div class="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-6 h-6 rounded bg-white flex items-center justify-center">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21l14-9L5 3v18z"></path></svg>
+                </div>
+                <h1 class="text-sm font-semibold tracking-wide text-white">After Motion <span class="text-vercel-400 font-normal">/ Engine</span></h1>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2 text-xs font-mono text-vercel-300">
+                    <span class="w-2 h-2 rounded-full bg-brand-cyan animate-pulse"></span>
+                    Compiler Ready
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-6xl w-full mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        <!-- Left Panel: Configuration -->
+        <div class="lg:col-span-4 flex flex-col gap-5">
+            
+            <div class="glass-card rounded-xl p-5">
+                <h2 class="text-xs font-semibold text-vercel-100 uppercase tracking-widest mb-4">Project Source</h2>
+                
+                <!-- Upload Dropzone -->
+                <div id="drop-zone" class="upload-zone rounded-lg p-6 flex flex-col items-center justify-center text-center cursor-pointer min-h-[140px]">
+                    <input type="file" id="file-input" accept=".html,.htm" class="hidden">
+                    
+                    <div id="upload-idle" class="flex flex-col items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-vercel-400 mb-2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                        <p class="text-sm font-medium text-vercel-200">Upload HTML File</p>
+                        <p class="text-xs text-vercel-500 mt-1">Drag & drop or click</p>
+                    </div>
+
+                    <div id="upload-success" class="hidden flex-col items-center w-full">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-cyan mb-2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                        <p class="text-sm font-medium text-vercel-100 truncate w-full px-2" id="filename-display">index.html</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Build Settings -->
+            <div class="glass-card rounded-xl p-5">
+                <h2 class="text-xs font-semibold text-vercel-100 uppercase tracking-widest mb-4">Build Settings</h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-vercel-400 mb-1.5 font-medium">Output Resolution</label>
+                        <select id="resolution" class="w-full bg-vercel-900 border border-vercel-700 rounded-md p-2.5 text-sm text-white focus:border-white outline-none transition-colors appearance-none">
+                            <option value="1920x1080">1080p FHD (1920×1080)</option>
+                            <option value="2560x1440">2K QHD (2560×1440)</option>
+                            <option value="3840x2160">4K UHD (3840×2160)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs text-vercel-400 mb-1.5 font-medium">Duration (s)</label>
+                            <input type="number" id="duration" min="10" max="120" value="10" class="w-full bg-vercel-900 border border-vercel-700 rounded-md p-2.5 text-sm text-white focus:border-white outline-none transition-colors">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-vercel-400 mb-1.5 font-medium">Framerate</label>
+                            <div class="w-full bg-vercel-800 border border-vercel-700 rounded-md p-2.5 text-sm text-vercel-400 cursor-not-allowed select-none">
+                                60 FPS (Fixed)
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <button id="render-btn" class="btn-deploy mt-6 w-full text-sm font-semibold py-3 rounded-md transition-all flex justify-center items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                    Build & Render
+                </button>
+            </div>
+        </div>
+
+        <!-- Right Panel: Environment & Console -->
+        <div class="lg:col-span-8 flex flex-col gap-5">
+            
+            <!-- Virtual DOM Environment -->
+            <div class="glass-card rounded-xl p-2 pb-3">
+                <div class="flex items-center justify-between px-2 py-1.5 mb-1">
+                    <span class="text-[10px] font-mono text-vercel-400 uppercase tracking-wider">Virtual Environment</span>
+                    <span id="resolution-badge" class="text-[10px] bg-vercel-700 text-vercel-200 px-2 py-0.5 rounded">1920x1080</span>
+                </div>
+                
+                <div class="preview-container relative">
+                    <!-- The scaling Iframe -->
+                    <iframe id="render-frame" sandbox="allow-scripts allow-same-origin"></iframe>
+                    
+                    <!-- Overlay placeholder -->
+                    <div id="preview-overlay" class="absolute inset-0 flex flex-col items-center justify-center bg-vercel-900/90 z-10">
+                        <span class="text-vercel-500 font-mono text-xs">Waiting for source file...</span>
+                    </div>
+
+                    <!-- Final Video Result -->
+                    <video id="result-video" controls class="hidden absolute inset-0 w-full h-full object-contain bg-black z-20"></video>
+                </div>
+            </div>
+
+            <!-- Build Console (Next.js style) -->
+            <div class="glass-card rounded-xl p-4 flex-1 min-h-[200px] flex flex-col">
+                <div class="flex items-center justify-between mb-3 border-b border-vercel-700 pb-2">
+                    <h2 class="text-xs font-semibold text-vercel-100 flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-vercel-400"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+                        Build Logs
+                    </h2>
+                    <a id="download-btn" href="#" class="hidden bg-white text-black text-[10px] font-bold px-3 py-1.5 rounded-sm hover:bg-gray-200 transition-colors">
+                        Download .webm
+                    </a>
+                </div>
+                
+                <div id="console-output" class="font-mono text-[11px] text-vercel-300 flex-1 overflow-y-auto terminal-scroll space-y-1.5">
+                    <div class="text-vercel-500">~ Ready to compile project.</div>
+                </div>
+            </div>
+            
+        </div>
+    </main>
+
+    <script>
+        // DOM Elements
+        const UI = {
+            dropZone: document.getElementById('drop-zone'),
+            fileInput: document.getElementById('file-input'),
+            uploadIdle: document.getElementById('upload-idle'),
+            uploadSuccess: document.getElementById('upload-success'),
+            filenameDisplay: document.getElementById('filename-display'),
+            resSelect: document.getElementById('resolution'),
+            resBadge: document.getElementById('resolution-badge'),
+            durationInput: document.getElementById('duration'),
+            renderBtn: document.getElementById('render-btn'),
+            iframe: document.getElementById('render-frame'),
+            previewOverlay: document.getElementById('preview-overlay'),
+            resultVideo: document.getElementById('result-video'),
+            consoleOut: document.getElementById('console-output'),
+            downloadBtn: document.getElementById('download-btn')
+        };
+
+        let userHtmlSource = "";
+        let isCompiling = false;
+
+        // --- Console Logger ---
+        function logMsg(msg, type = 'info') {
+            const line = document.createElement('div');
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            
+            let colorStr = 'text-vercel-300';
+            if(type === 'success') colorStr = 'text-brand-cyan';
+            if(type === 'error') colorStr = 'text-red-400';
+            if(type === 'warn') colorStr = 'text-yellow-400';
+
+            line.className = colorStr;
+            line.innerHTML = `<span class="text-vercel-500 mr-2">[${time}]</span> ${msg}`;
+            UI.consoleOut.appendChild(line);
+            UI.consoleOut.scrollTop = UI.consoleOut.scrollHeight;
+        }
+
+        // --- Iframe Scaling Logic ---
+        function updateIframeResolution() {
+            const [w, h] = UI.resSelect.value.split('x').map(Number);
+            UI.resBadge.textContent = UI.resSelect.value;
+            
+            // Set the actual internal size of the iframe to the target resolution
+            UI.iframe.style.width = `${w}px`;
+            UI.iframe.style.height = `${h}px`;
+            
+            // Scale it visually to fit the container
+            const container = document.querySelector('.preview-container');
+            const scale = container.clientWidth / w;
+            UI.iframe.style.transform = `scale(${scale})`;
+        }
+
+        window.addEventListener('resize', updateIframeResolution);
+        UI.resSelect.addEventListener('change', updateIframeResolution);
+
+        // --- File Upload Handling ---
+        function handleFile(file) {
+            if (!file || (!file.name.endsWith('.html') && !file.name.endsWith('.htm'))) {
+                logMsg("Error: Invalid file format. Upload .html", "error");
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                userHtmlSource = e.target.result;
+                
+                UI.uploadIdle.classList.add('hidden');
+                UI.uploadSuccess.classList.remove('hidden');
+                UI.uploadSuccess.classList.add('flex');
+                UI.filenameDisplay.textContent = file.name;
+                
+                logMsg(`Loaded source: ${file.name}`);
+                
+                // Inject standard HTML without time mocking just for preview
+                UI.iframe.srcdoc = userHtmlSource;
+                UI.previewOverlay.classList.add('hidden');
+                UI.resultVideo.classList.add('hidden');
+                
+                // Ensure iframe scales correctly
+                setTimeout(updateIframeResolution, 100);
+            };
+            reader.readAsText(file);
+        }
+
+        UI.dropZone.addEventListener('click', () => UI.fileInput.click());
+        UI.dropZone.addEventListener('dragover', (e) => { e.preventDefault(); UI.dropZone.classList.add('dragover'); });
+        UI.dropZone.addEventListener('dragleave', () => UI.dropZone.classList.remove('dragover'));
+        UI.dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            UI.dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        UI.fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) handleFile(e.target.files[0]);
+        });
+
+        // --- Core Rendering Engine ---
+        UI.renderBtn.addEventListener('click', async () => {
+            if (isCompiling) return;
+            if (!userHtmlSource) {
+                logMsg("Error: No source file uploaded.", "error");
+                return;
+            }
+
+            if (!('VideoEncoder' in window)) {
+                logMsg("CRITICAL: WebCodecs API is not supported in this browser. Please use Chrome or Edge.", "error");
+                return;
+            }
+
+            isCompiling = true;
+            UI.renderBtn.disabled = true;
+            UI.renderBtn.innerHTML = `<span class="w-4 h-4 border-2 border-vercel-500 border-t-white rounded-full animate-spin"></span> Compiling...`;
+            UI.downloadBtn.classList.add('hidden');
+            UI.resultVideo.classList.add('hidden');
+            
+            const [width, height] = UI.resSelect.value.split('x').map(Number);
+            const durationSec = parseInt(UI.durationInput.value);
+            const fps = 60;
+            const totalFrames = durationSec * fps;
+            
+            logMsg(`Starting Next.js style compiler...`);
+            logMsg(`Target: ${width}x${height} @ 60FPS for ${durationSec}s`);
+
+            try {
+                // 1. Inject Time-Mocking Script to control animation deterministically
+                logMsg(`Injecting virtual environment runtime...`);
+                const timeMockScript = `
+                    <script>
+                        window.__ENGINE_TIME__ = 0;
+                        const origPerfNow = performance.now.bind(performance);
+                        performance.now = () => window.__ENGINE_TIME__;
+                        Date.now = () => Math.floor(window.__ENGINE_TIME__);
+                        
+                        window.__RAF_QUEUE__ = [];
+                        window.requestAnimationFrame = (cb) => { window.__RAF_QUEUE__.push(cb); return 1; };
+                        
+                        window.__ENGINE_TICK__ = (ms) => {
+                            window.__ENGINE_TIME__ = ms;
+                            document.getAnimations().forEach(a => { a.pause(); a.currentTime = ms; });
+                            const q = window.__RAF_QUEUE__;
+                            window.__RAF_QUEUE__ = [];
+                            q.forEach(cb => { if(cb) cb(ms); });
+                        };
+                    <\/script>
+                `;
+                
+                let compiledHtml = userHtmlSource;
+                if(compiledHtml.includes('<head>')) compiledHtml = compiledHtml.replace('<head>', `<head>${timeMockScript}`);
+                else compiledHtml = timeMockScript + compiledHtml;
+                
+                // Reload iframe with injected environment
+                UI.iframe.srcdoc = compiledHtml;
+                
+                // Wait for iframe to fully parse and load assets
+                await new Promise(r => {
+                    UI.iframe.onload = r;
+                    setTimeout(r, 2000); // safety fallback
+                });
+                
+                logMsg(`Virtual DOM constructed successfully.`, 'success');
+
+                // 2. Setup WebM Muxer
+                const muxer = new WebMMuxer.Muxer({
+                    target: new WebMMuxer.ArrayBufferTarget(),
+                    video: { codec: 'V_VP9', width, height, frameRate: fps }
+                });
+
+                // 3. Setup Video Encoder
+                let activeChunkCount = 0;
+                const encoder = new VideoEncoder({
+                    output: (chunk, meta) => {
+                        muxer.addVideoChunk(chunk, meta);
+                        activeChunkCount++;
+                    },
+                    error: (e) => {
+                        logMsg(`Encoder Error: ${e.message}`, 'error');
+                        console.error(e);
+                    }
+                });
+
+                // High quality VP9 preset
+                encoder.configure({
+                    codec: 'vp09.00.10.08',
+                    width, height,
+                    bitrate: width > 2000 ? 25_000_000 : 12_000_000, 
+                    framerate: fps
+                });
+
+                // 4. Create internal Canvas to act as the pipeline buffer
+                const captureCanvas = document.createElement('canvas');
+                captureCanvas.width = width;
+                captureCanvas.height = height;
+                const ctx = captureCanvas.getContext('2d', { willReadFrequently: true });
+                
+                logMsg(`Starting frame extraction loop (Total: ${totalFrames} frames)...`);
+
+                // 5. Offline Render Loop
+                for (let i = 0; i < totalFrames; i++) {
+                    const timeMs = i * (1000 / fps);
+                    
+                    // A. Step the virtual time in the iframe
+                    if (UI.iframe.contentWindow.__ENGINE_TICK__) {
+                        UI.iframe.contentWindow.__ENGINE_TICK__(timeMs);
+                    }
+
+                    // Yield briefly to let DOM layout calculate if needed
+                    if (i % 10 === 0) await new Promise(r => setTimeout(r, 0));
+
+                    // B. Extract visuals
+                    const iDoc = UI.iframe.contentDocument;
+                    const nativeCanvas = iDoc.querySelector('canvas');
+                    
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(0, 0, width, height);
+
+                    if (nativeCanvas) {
+                        // High Performance Path: Direct Canvas copying
+                        ctx.drawImage(nativeCanvas, 0, 0, width, height);
+                    } else {
+                        // Compatibility Path: DOM Serialization (Slower)
+                        if(i === 0) logMsg(`Warning: No <canvas> detected. Using DOM snapshot mode (slower).`, 'warn');
+                        const domSnap = await html2canvas(iDoc.body, { 
+                            logging: false, backgroundColor: '#000000', scale: 1 
+                        });
+                        ctx.drawImage(domSnap, 0, 0, width, height);
+                    }
+
+                    // C. Feed to Encoder
+                    const frame = new VideoFrame(captureCanvas, { timestamp: timeMs * 1000 }); // Microseconds
+                    encoder.encode(frame, { keyFrame: i % fps === 0 });
+                    frame.close();
+
+                    // D. Update UI Logs periodically to prevent hanging UI
+                    if (i % 30 === 0 || i === totalFrames - 1) {
+                        const pct = Math.round((i / totalFrames) * 100);
+                        const progressStr = `[${'='.repeat(Math.floor(pct/10))}${' '.repeat(10-Math.floor(pct/10))}]`;
+                        logMsg(`> Encoding frame ${i}/${totalFrames} ${progressStr} ${pct}%`);
+                        
+                        // Force DOM update
+                        await new Promise(r => requestAnimationFrame(r));
+                    }
+                }
+
+                logMsg(`Flushing encoding buffers...`);
+                await encoder.flush();
+                muxer.finalize();
+                
+                logMsg(`Finalizing WebM container...`);
+                const buffer = muxer.target.buffer;
+                const blob = new Blob([buffer], { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+
+                logMsg(`Build completed successfully! 🎉`, 'success');
+
+                // 6. Present Video
+                UI.resultVideo.src = url;
+                UI.resultVideo.classList.remove('hidden');
+                
+                UI.downloadBtn.href = url;
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                UI.downloadBtn.download = `AfterMotion_${width}x${height}_${timestamp}.webm`;
+                UI.downloadBtn.classList.remove('hidden');
+
+            } catch (err) {
+                logMsg(`FATAL BUILD ERROR: ${err.message}`, 'error');
+                console.error(err);
+            } finally {
+                isCompiling = false;
+                UI.renderBtn.disabled = false;
+                UI.renderBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                    Build & Render
+                `;
+            }
+        });
+    </script>
+</body>
+</html>
